@@ -8,8 +8,12 @@ app.use(express.json());
 const PUMBLE_WEBHOOK_URL = "https://api.pumble.com/workspaces/68b1f7f5676885957db941cc/incomingWebhooks/postMessage/PZEvXCCeejbZPCgDWQmmmxQv";
 const CLICKUP_WEBHOOK_SECRET = "G6WHRPT5D7PC7JNGUQ5E8EDZEMNEGUJSVKIKOK9T478VRAVNTGPO9W8DO07XUJD1";
 const CLICKUP_API_KEY = "pk_236544229_05XOSBKVYW1TIJ4LE63SZCIUTGPAX6BV";
+const PUMBLE_API_KEY = "90b0353b8b908663b2efddfe9cd596bb";
 
 const SKIP_SIGNATURE = false;
+
+// Cache so we don't look up the same email twice
+const userIdCache = {};
 
 function verifySignature(req) {
     const signature = req.headers["x-signature"];
@@ -28,13 +32,39 @@ async function getTaskDetails(taskId) {
     return res.data;
 }
 
-function buildMessage(task, assignee) {
+async function getPumbleUserId(email) {
+    if (userIdCache[email]) return userIdCache[email];
+
+    try {
+        const res = await axios.get(
+            "https://pumble-api-keys.addons.marketplace.cake.com/listUsers",
+            { headers: { "Api-Key": PUMBLE_API_KEY } }
+        );
+
+        const users = res.data || [];
+        const match = users.find(u => u.email === email);
+
+        if (match) {
+            userIdCache[email] = match.id;
+            return match.id;
+        }
+    } catch (err) {
+        console.error("Failed to fetch Pumble users:", err.message);
+    }
+
+    return null;
+}
+
+async function buildMessage(task, assignee) {
     const description = task.description
         ? task.description.trim().slice(0, 150) + (task.description.length > 150 ? "..." : "")
         : null;
 
+    const pumbleUserId = await getPumbleUserId(assignee.email);
+    const mention = pumbleUserId ? `<<@${pumbleUserId}>>` : assignee.username;
+
     const lines = [
-        `<@${assignee.email}> you have been assigned a new task.`,
+        `${mention} you have been assigned a new task.`,
         ``,
         `*Task:* ${task.name}`,
         description ? `*Description:* ${description}` : null,
@@ -52,22 +82,34 @@ app.post("/webhook", async (req, res) => {
         return res.status(401).send("Unauthorized");
     }
 
-    const { event, task_id } = req.body;
+    const { event, task_id, history_items } = req.body;
+
+    // LOG THE FULL PAYLOAD
+    console.log("Full payload:", JSON.stringify(req.body, null, 2));
 
     if (event !== "taskAssigneeUpdated") {
         return res.status(200).send("Ignored");
     }
-
     try {
         const task = await getTaskDetails(task_id);
 
-        const assignees = task.assignees || [];
+        const addedAssignees = [];
+        if (history_items && history_items.length > 0) {
+            for (const item of history_items) {
+                if (item.field === "assignee" && item.after) {
+                    addedAssignees.push(item.after);
+                }
+            }
+        }
+
+        const assignees = addedAssignees.length > 0 ? addedAssignees : task.assignees || [];
+
         if (assignees.length === 0) {
             return res.status(200).send("No assignees");
         }
 
         for (const assignee of assignees) {
-            const message = buildMessage(task, assignee);
+            const message = await buildMessage(task, assignee);
             await axios.post(PUMBLE_WEBHOOK_URL, message);
             console.log(`Notified Pumble for assignee: ${assignee.email}`);
         }
