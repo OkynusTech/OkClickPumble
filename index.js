@@ -75,7 +75,6 @@ async function buildMessage(task, assignee) {
 
     return { text: lines.filter(line => line !== null).join("\n") };
 }
-
 app.post("/webhook", async (req, res) => {
     if (!SKIP_SIGNATURE && !verifySignature(req)) {
         console.log("Invalid signature, ignoring request");
@@ -84,34 +83,32 @@ app.post("/webhook", async (req, res) => {
 
     const { event, task_id, history_items } = req.body;
 
-    // LOG THE FULL PAYLOAD
-    console.log("Full payload:", JSON.stringify(req.body, null, 2));
-
     if (event !== "taskAssigneeUpdated") {
         return res.status(200).send("Ignored");
     }
+
     try {
         const task = await getTaskDetails(task_id);
 
+        // Only notify on assignee_add, ignore assignee_rem
         const addedAssignees = [];
         if (history_items && history_items.length > 0) {
             for (const item of history_items) {
-                if (item.field === "assignee" && item.after) {
+                if (item.field === "assignee_add" && item.after) {
                     addedAssignees.push(item.after);
                 }
             }
         }
 
-        const assignees = addedAssignees.length > 0 ? addedAssignees : task.assignees || [];
-
-        if (assignees.length === 0) {
-            return res.status(200).send("No assignees");
+        if (addedAssignees.length === 0) {
+            console.log("No new assignees, skipping");
+            return res.status(200).send("No new assignees");
         }
 
-        for (const assignee of assignees) {
+        for (const assignee of addedAssignees) {
             const message = await buildMessage(task, assignee);
             await axios.post(PUMBLE_WEBHOOK_URL, message);
-            console.log(`Notified Pumble for assignee: ${assignee.email}`);
+            console.log(`Notified Pumble for: ${assignee.email}`);
         }
 
         res.status(200).send("OK");
