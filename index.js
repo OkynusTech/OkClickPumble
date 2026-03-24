@@ -9,7 +9,7 @@ const PUMBLE_WEBHOOK_URL = "https://api.pumble.com/workspaces/68b1f7f5676885957d
 const CLICKUP_WEBHOOK_SECRET = "G6WHRPT5D7PC7JNGUQ5E8EDZEMNEGUJSVKIKOK9T478VRAVNTGPO9W8DO07XUJD1";
 const CLICKUP_API_KEY = "pk_236544229_05XOSBKVYW1TIJ4LE63SZCIUTGPAX6BV";
 
-const SKIP_SIGNATURE = true;
+const SKIP_SIGNATURE = false;
 
 function verifySignature(req) {
     const signature = req.headers["x-signature"];
